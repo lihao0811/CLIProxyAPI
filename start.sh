@@ -5,9 +5,9 @@ export PGSTORE_DSN="postgresql://postgres:kzknCJHVzfYZZNYskUJhvyJkOdyjeSTI@postg
 export PGSTORE_SCHEMA="public"
 export PGSTORE_LOCAL_PATH="/data/pgstore"
 
-if [ ! -f /CLIProxyAPI/config.yaml ]; then
-    cp /CLIProxyAPI/railway.yaml /CLIProxyAPI/config.yaml
-fi
+# 强制使用 railway.yaml
+rm -f /CLIProxyAPI/config.yaml
+cp /CLIProxyAPI/railway.yaml /CLIProxyAPI/config.yaml
 
 if [ -n "$PORT" ]; then
     sed -i "s/port: [0-9]*/port: $PORT/" /CLIProxyAPI/config.yaml
