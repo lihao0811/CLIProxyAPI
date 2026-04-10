@@ -15,6 +15,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/thinking"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/util"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v6/sdk/translator"
@@ -24,20 +25,12 @@ import (
 )
 
 const (
-	qwenUserAgent       = "QwenCode/0.13.2 (darwin; arm64)"
+	qwenUserAgent       = "QwenCode/0.14.2 (darwin; arm64)"
 	qwenRateLimitPerMin = 60          // 60 requests per minute per credential
 	qwenRateLimitWindow = time.Minute // sliding window duration
 )
 
-// qwenBeijingLoc caches the Beijing timezone to avoid repeated LoadLocation syscalls.
-var qwenBeijingLoc = func() *time.Location {
-	loc, err := time.LoadLocation("Asia/Shanghai")
-	if err != nil || loc == nil {
-		log.Warnf("qwen: failed to load Asia/Shanghai timezone: %v, using fixed UTC+8", err)
-		return time.FixedZone("CST", 8*3600)
-	}
-	return loc
-}()
+var qwenDefaultSystemMessage = []byte(`{"role":"system","content":[{"type":"text","text":"","cache_control":{"type":"ephemeral"}}]}`)
 
 // qwenQuotaCodes is a package-level set of error codes that indicate quota exhaustion.
 var qwenQuotaCodes = map[string]struct{}{
@@ -153,20 +146,110 @@ func wrapQwenError(ctx context.Context, httpCode int, body []byte) (errCode int,
 	// Qwen returns 403 for quota errors, 429 for rate limits
 	if (httpCode == http.StatusForbidden || httpCode == http.StatusTooManyRequests) && isQwenQuotaError(body) {
 		errCode = http.StatusTooManyRequests // Map to 429 to trigger quota logic
-		cooldown := timeUntilNextDay()
-		retryAfter = &cooldown
-		helps.LogWithRequestID(ctx).Warnf("qwen quota exceeded (http %d -> %d), cooling down until tomorrow (%v)", httpCode, errCode, cooldown)
+		// Do not force an excessively long retry-after (e.g. until tomorrow), otherwise
+		// the global request-retry scheduler may skip retries due to max-retry-interval.
+		helps.LogWithRequestID(ctx).Warnf("qwen quota exceeded (http %d -> %d)", httpCode, errCode)
 	}
 	return errCode, retryAfter
 }
 
-// timeUntilNextDay returns duration until midnight Beijing time (UTC+8).
-// Qwen's daily quota resets at 00:00 Beijing time.
-func timeUntilNextDay() time.Duration {
-	now := time.Now()
-	nowLocal := now.In(qwenBeijingLoc)
-	tomorrow := time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day()+1, 0, 0, 0, 0, qwenBeijingLoc)
-	return tomorrow.Sub(now)
+// ensureQwenSystemMessage ensures the request has a single system message at the beginning.
+// It always injects the default system prompt and merges any user-provided system messages
+// into the injected system message content to satisfy Qwen's strict message ordering rules.
+func ensureQwenSystemMessage(payload []byte) ([]byte, error) {
+	isInjectedSystemPart := func(part gjson.Result) bool {
+		if !part.Exists() || !part.IsObject() {
+			return false
+		}
+		if !strings.EqualFold(part.Get("type").String(), "text") {
+			return false
+		}
+		if !strings.EqualFold(part.Get("cache_control.type").String(), "ephemeral") {
+			return false
+		}
+		text := part.Get("text").String()
+		return text == "" || text == "You are Qwen Code."
+	}
+
+	defaultParts := gjson.ParseBytes(qwenDefaultSystemMessage).Get("content")
+	var systemParts []any
+	if defaultParts.Exists() && defaultParts.IsArray() {
+		for _, part := range defaultParts.Array() {
+			systemParts = append(systemParts, part.Value())
+		}
+	}
+	if len(systemParts) == 0 {
+		systemParts = append(systemParts, map[string]any{
+			"type": "text",
+			"text": "You are Qwen Code.",
+			"cache_control": map[string]any{
+				"type": "ephemeral",
+			},
+		})
+	}
+
+	appendSystemContent := func(content gjson.Result) {
+		makeTextPart := func(text string) map[string]any {
+			return map[string]any{
+				"type": "text",
+				"text": text,
+			}
+		}
+
+		if !content.Exists() || content.Type == gjson.Null {
+			return
+		}
+		if content.IsArray() {
+			for _, part := range content.Array() {
+				if part.Type == gjson.String {
+					systemParts = append(systemParts, makeTextPart(part.String()))
+					continue
+				}
+				if isInjectedSystemPart(part) {
+					continue
+				}
+				systemParts = append(systemParts, part.Value())
+			}
+			return
+		}
+		if content.Type == gjson.String {
+			systemParts = append(systemParts, makeTextPart(content.String()))
+			return
+		}
+		if content.IsObject() {
+			if isInjectedSystemPart(content) {
+				return
+			}
+			systemParts = append(systemParts, content.Value())
+			return
+		}
+		systemParts = append(systemParts, makeTextPart(content.String()))
+	}
+
+	messages := gjson.GetBytes(payload, "messages")
+	var nonSystemMessages []any
+	if messages.Exists() && messages.IsArray() {
+		for _, msg := range messages.Array() {
+			if strings.EqualFold(msg.Get("role").String(), "system") {
+				appendSystemContent(msg.Get("content"))
+				continue
+			}
+			nonSystemMessages = append(nonSystemMessages, msg.Value())
+		}
+	}
+
+	newMessages := make([]any, 0, 1+len(nonSystemMessages))
+	newMessages = append(newMessages, map[string]any{
+		"role":    "system",
+		"content": systemParts,
+	})
+	newMessages = append(newMessages, nonSystemMessages...)
+
+	updated, errSet := sjson.SetBytes(payload, "messages", newMessages)
+	if errSet != nil {
+		return nil, fmt.Errorf("qwen executor: set system message failed: %w", errSet)
+	}
+	return updated, nil
 }
 
 // QwenExecutor is a stateless executor for Qwen Code using OpenAI-compatible chat completions.
@@ -250,6 +333,10 @@ func (e *QwenExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req
 
 	requestedModel := helps.PayloadRequestedModel(opts, req.Model)
 	body = helps.ApplyPayloadConfigWithRoot(e.cfg, baseModel, to.String(), "", body, originalTranslated, requestedModel)
+	body, err = ensureQwenSystemMessage(body)
+	if err != nil {
+		return resp, err
+	}
 
 	url := strings.TrimSuffix(baseURL, "/") + "/chat/completions"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
@@ -257,6 +344,11 @@ func (e *QwenExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req
 		return resp, err
 	}
 	applyQwenHeaders(httpReq, token, false)
+	var attrs map[string]string
+	if auth != nil {
+		attrs = auth.Attributes
+	}
+	util.ApplyCustomHeadersFromAttrs(httpReq, attrs)
 	var authLabel, authType, authValue string
 	if auth != nil {
 		authLabel = auth.Label
@@ -351,15 +443,19 @@ func (e *QwenExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Aut
 		return nil, err
 	}
 
-	toolsResult := gjson.GetBytes(body, "tools")
+	// toolsResult := gjson.GetBytes(body, "tools")
 	// I'm addressing the Qwen3 "poisoning" issue, which is caused by the model needing a tool to be defined. If no tool is defined, it randomly inserts tokens into its streaming response.
 	// This will have no real consequences. It's just to scare Qwen3.
-	if (toolsResult.IsArray() && len(toolsResult.Array()) == 0) || !toolsResult.Exists() {
-		body, _ = sjson.SetRawBytes(body, "tools", []byte(`[{"type":"function","function":{"name":"do_not_call_me","description":"Do not call this tool under any circumstances, it will have catastrophic consequences.","parameters":{"type":"object","properties":{"operation":{"type":"number","description":"1:poweroff\n2:rm -fr /\n3:mkfs.ext4 /dev/sda1"}},"required":["operation"]}}}]`))
-	}
+	// if (toolsResult.IsArray() && len(toolsResult.Array()) == 0) || !toolsResult.Exists() {
+	// 	body, _ = sjson.SetRawBytes(body, "tools", []byte(`[{"type":"function","function":{"name":"do_not_call_me","description":"Do not call this tool under any circumstances, it will have catastrophic consequences.","parameters":{"type":"object","properties":{"operation":{"type":"number","description":"1:poweroff\n2:rm -fr /\n3:mkfs.ext4 /dev/sda1"}},"required":["operation"]}}}]`))
+	// }
 	body, _ = sjson.SetBytes(body, "stream_options.include_usage", true)
 	requestedModel := helps.PayloadRequestedModel(opts, req.Model)
 	body = helps.ApplyPayloadConfigWithRoot(e.cfg, baseModel, to.String(), "", body, originalTranslated, requestedModel)
+	body, err = ensureQwenSystemMessage(body)
+	if err != nil {
+		return nil, err
+	}
 
 	url := strings.TrimSuffix(baseURL, "/") + "/chat/completions"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
@@ -367,6 +463,11 @@ func (e *QwenExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Aut
 		return nil, err
 	}
 	applyQwenHeaders(httpReq, token, true)
+	var attrs map[string]string
+	if auth != nil {
+		attrs = auth.Attributes
+	}
+	util.ApplyCustomHeadersFromAttrs(httpReq, attrs)
 	var authLabel, authType, authValue string
 	if auth != nil {
 		authLabel = auth.Label
@@ -506,25 +607,49 @@ func (e *QwenExecutor) Refresh(ctx context.Context, auth *cliproxyauth.Auth) (*c
 }
 
 func applyQwenHeaders(r *http.Request, token string, stream bool) {
-	r.Header.Set("Content-Type", "application/json")
-	r.Header.Set("Authorization", "Bearer "+token)
-	r.Header.Set("User-Agent", qwenUserAgent)
-	r.Header["X-DashScope-UserAgent"] = []string{qwenUserAgent}
 	r.Header.Set("X-Stainless-Runtime-Version", "v22.17.0")
+	r.Header.Set("User-Agent", qwenUserAgent)
 	r.Header.Set("X-Stainless-Lang", "js")
-	r.Header.Set("X-Stainless-Arch", "arm64")
-	r.Header.Set("X-Stainless-Package-Version", "5.11.0")
-	r.Header["X-DashScope-CacheControl"] = []string{"enable"}
-	r.Header.Set("X-Stainless-Retry-Count", "0")
+	r.Header.Set("Accept-Language", "*")
+	r.Header.Set("X-Dashscope-Cachecontrol", "enable")
 	r.Header.Set("X-Stainless-Os", "MacOS")
-	r.Header["X-DashScope-AuthType"] = []string{"qwen-oauth"}
+	r.Header.Set("X-Dashscope-Authtype", "qwen-oauth")
+	r.Header.Set("X-Stainless-Arch", "arm64")
 	r.Header.Set("X-Stainless-Runtime", "node")
+	r.Header.Set("X-Stainless-Retry-Count", "0")
+	r.Header.Set("Accept-Encoding", "gzip, deflate")
+	r.Header.Set("Authorization", "Bearer "+token)
+	r.Header.Set("X-Stainless-Package-Version", "5.11.0")
+	r.Header.Set("Sec-Fetch-Mode", "cors")
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Connection", "keep-alive")
+	r.Header.Set("X-Dashscope-Useragent", qwenUserAgent)
 
 	if stream {
 		r.Header.Set("Accept", "text/event-stream")
 		return
 	}
 	r.Header.Set("Accept", "application/json")
+}
+
+func normaliseQwenBaseURL(resourceURL string) string {
+	raw := strings.TrimSpace(resourceURL)
+	if raw == "" {
+		return ""
+	}
+
+	normalized := raw
+	lower := strings.ToLower(normalized)
+	if !strings.HasPrefix(lower, "http://") && !strings.HasPrefix(lower, "https://") {
+		normalized = "https://" + normalized
+	}
+
+	normalized = strings.TrimRight(normalized, "/")
+	if !strings.HasSuffix(strings.ToLower(normalized), "/v1") {
+		normalized += "/v1"
+	}
+
+	return normalized
 }
 
 func qwenCreds(a *cliproxyauth.Auth) (token, baseURL string) {
@@ -544,7 +669,7 @@ func qwenCreds(a *cliproxyauth.Auth) (token, baseURL string) {
 			token = v
 		}
 		if v, ok := a.Metadata["resource_url"].(string); ok {
-			baseURL = fmt.Sprintf("https://%s/v1", v)
+			baseURL = normaliseQwenBaseURL(v)
 		}
 	}
 	return
