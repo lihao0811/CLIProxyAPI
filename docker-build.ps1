@@ -16,6 +16,7 @@ $choice = Read-Host -Prompt "Enter choice [1-2]"
 switch ($choice) {
     "1" {
         Write-Host "--- Running with Pre-built Image ---"
+        $env:CLI_PROXY_IMAGE = "eceasy/cli-proxy-api:latest"
         docker compose up -d --remove-orphans --no-build
         Write-Host "Services are starting from remote image."
         Write-Host "Run 'docker compose logs -f' to see the logs."
@@ -35,7 +36,7 @@ switch ($choice) {
         Write-Host "----------------------------------------"
 
         # Build and start the services with a local-only image tag
-        $env:CLI_PROXY_IMAGE = "cli-proxy-api:local"
+        $env:CLI_PROXY_IMAGE = "cliproxyapi-local:latest"
         
         Write-Host "Building the Docker image..."
         docker compose build --build-arg VERSION=$VERSION --build-arg COMMIT=$COMMIT --build-arg BUILD_DATE=$BUILD_DATE
