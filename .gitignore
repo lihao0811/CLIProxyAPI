@@ -13,6 +13,12 @@ conv/*
 temp/*
 refs/*
 
+# Runtime / deploy data
+data/
+data-uat/
+data-test/
+.backup/
+
 # Storage backends
 pgstore/*
 gitstore/*

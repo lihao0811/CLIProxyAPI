@@ -1,18 +1,12 @@
 services:
   cli-proxy-api:
-    image: ${CLI_PROXY_IMAGE:-cliproxyapi-local:latest}
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        VERSION: ${VERSION:-dev}
-        COMMIT: ${COMMIT:-none}
-        BUILD_DATE: ${BUILD_DATE:-unknown}
+    image: ${APP_IMAGE:-docker.cnb.cool/jung.ren/cliproxyapi:latest}
     container_name: cli-proxy-api
-    # env_file:
-    #   - .env
+    env_file:
+      - path: ./.env
+        required: false
     environment:
-      DEPLOY: ${DEPLOY:-}
+      DEPLOY: ${DEPLOY:-cloud}
       COLLECTOR_SECRET: ${COLLECTOR_SECRET:-}
       COLLECTOR_TARGET: ${COLLECTOR_TARGET:-http://127.0.0.1:8080}
       COLLECTOR_OUTPUT_DIR: ${COLLECTOR_OUTPUT_DIR:-/data/usage}
@@ -26,4 +20,11 @@ services:
       - "${CLI_PROXY_PORT_11451:-11451}:11451"
     volumes:
       - ${CLI_PROXY_DATA_PATH:-./data}:/data
+      - ${CLI_PROXY_LOGS_PATH:-./logs}:/CLIProxyAPI/logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/v1/models -H 'Authorization: Bearer railway-default-key' >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
