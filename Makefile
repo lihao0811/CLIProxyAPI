@@ -3,7 +3,7 @@ PROD_COMPOSE := docker compose -f docker-compose.yml
 
 .PHONY: help \
         uat-bootstrap uat-up uat-stop uat-restart uat-rm uat-logs uat-status uat-pull \
-        prod-deploy prod-status prod-logs prod-app-logs prod-pull prod-rollback prod-backup
+        prod-deploy prod-deploy-force prod-status prod-logs prod-app-logs prod-pull prod-rollback prod-backup
 
 help:
 	@printf '%s\n' \
@@ -19,8 +19,9 @@ help:
 	'' \
 	'== Production (cli-proxy-api) ==' \
 	'prod-backup       Snapshot configs, image tag and container state' \
-	'prod-pull         Pull latest image without restart' \
-	'prod-deploy       Backup, pull, recreate, wait for healthcheck' \
+	'prod-pull         Pull latest image (no restart)' \
+	'prod-deploy       Backup, pull, recreate ONLY if image digest changed' \
+	'prod-deploy-force Backup, pull, ALWAYS recreate (use when compose/env changed)' \
 	'prod-status       Show production container + healthcheck' \
 	'prod-logs         Tail container stdout (collector + start.sh)' \
 	'prod-app-logs     Tail application log file (./logs/main.log)' \
@@ -66,7 +67,10 @@ prod-pull:
 	$(PROD_COMPOSE) pull
 
 prod-deploy:
-	sh ./scripts/deploy.sh
+	FORCE="$(FORCE)" sh ./scripts/deploy.sh
+
+prod-deploy-force:
+	FORCE=1 sh ./scripts/deploy.sh
 
 prod-status:
 	@docker ps -a --format '{{.Names}}\t{{.Status}}\t{{.Ports}}' | grep -E '^cli-proxy-api\b|^NAMES\b' || true

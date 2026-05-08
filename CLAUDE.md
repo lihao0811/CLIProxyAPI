@@ -276,72 +276,64 @@ ssh -p 13100 root@81.69.15.109 'cd /data/CLIProxyAPI && sh scripts/deploy.sh'
 
 ## 6. 部署操作手册
 
-> 所有命令默认在 `/data/CLIProxyAPI` 目录下执行（生产服务器）。
-> 服务器没装 `make`，所有命令直接 `sh scripts/xxx.sh`。
+> **入口统一是 `make`，不要直接 sh 脚本。** 服务器上要先 `apt install make`（一次性）。
+> `scripts/*.sh` 仅作 Makefile 的实现，故障兜底时才直接调（如 make 自己挂了）。
+> 所有命令都在 `/data/CLIProxyAPI` 目录下执行。
+> `make help` 永远是最权威的命令清单——半年后忘记了，先打这个。
 
-### 6.1 生产部署（约 7-15s 中断）
+### 6.1 生产部署（智能：没更新就不重启）
 ```sh
-sh scripts/deploy.sh
+make prod-deploy
 ```
 做的事：
-1. 调 `scripts/backup.sh` 创建 `.backup/<时间戳>/` 快照（**含 RESTORE.sh**）
+1. `make prod-backup` 创建 `.backup/<时间戳>/` 快照
 2. `mkdir -p logs data/auth data/usage`
 3. `docker compose pull`
-4. `docker compose up -d`（recreate）
-5. 轮询 healthcheck（最多 90s）
+4. **比较 image digest**：没变化 → 立即结束，**不重启**；有变化 → 继续
+5. `docker compose up -d` recreate
+6. 轮询 healthcheck（最多 90s）
+
+强制重启（即使镜像没变，比如改了 docker-compose.yml / .env）：
+```sh
+make prod-deploy-force
+```
 
 ### 6.2 回滚
 
-回滚最近一次备份：
 ```sh
-sh scripts/rollback.sh
+make prod-rollback                                              # 最近一次备份
+sh scripts/rollback.sh 20260508-043503                          # 指定时间戳（make 没参数语法时退化到脚本）
+sh /data/CLIProxyAPI/.backup/<时间戳>/RESTORE.sh                  # 备份目录自带的 RESTORE.sh，独立可用
 ```
 
-回滚到指定时间戳：
+### 6.3 备份 / 状态 / 日志
+
 ```sh
-sh scripts/rollback.sh 20260508-043503
+make prod-backup       # 单独打个快照
+make prod-status       # 容器状态 + healthcheck
+make prod-logs         # 容器 stdout（collector + start.sh）
+make prod-app-logs     # tail -F ./logs/main.log（应用主日志）
 ```
 
-每个备份目录里也有自包含的 `RESTORE.sh`（不依赖仓库脚本）：
+### 6.4 UAT（独立隔离环境，端口 13127）
+
 ```sh
-sh /data/CLIProxyAPI/.backup/<时间戳>/RESTORE.sh
+make uat-bootstrap     # 第一次：复制生产 auth 到 data-uat
+make uat-up            # 启动
+make uat-status        # 看状态
+make uat-logs          # 看日志
+make uat-stop          # 停（生产不受影响）
+make uat-rm            # 删除容器
 ```
 
-### 6.3 单独备份（不部署）
-```sh
-sh scripts/backup.sh
-```
-任何危险操作前可手动跑一次。
-
-### 6.4 UAT（独立隔离环境）
-```sh
-# 第一次：把生产 auth 文件复制到 data-uat
-mkdir -p data-uat/auth data-uat/usage
-cp -r data/auth/. data-uat/auth/
-
-# 启动 UAT（端口 13127，独立 data-uat 卷）
-docker compose -f docker-compose.uat.yml pull
-docker compose -f docker-compose.uat.yml up -d
-
-# 测试
-curl -H "Authorization: Bearer railway-default-key" http://127.0.0.1:13127/v1/models
-
-# 看 UAT CSV
-ls -la data-uat/usage/
-
-# 停掉 UAT（生产不受影响）
-docker compose -f docker-compose.uat.yml down
-```
-
-### 6.5 看日志和数据
+### 6.5 看消费数据
 
 | 想看什么 | 命令 |
 |---|---|
-| 应用日志（持久化） | `tail -F /data/CLIProxyAPI/logs/main.log` |
-| 容器 stdout（collector + start.sh） | `docker logs -f cli-proxy-api` |
-| 错误请求详细 | `ls /data/CLIProxyAPI/logs/error-*` |
-| 每条调用 token 统计 | `cat /data/CLIProxyAPI/data/usage/*.csv` |
-| 容器健康 | `docker ps` 看 `(healthy)` |
+| 每条调用的账号/token CSV | `cat /data/CLIProxyAPI/data/usage/*.csv` |
+| 应用日志（持久化） | `make prod-app-logs` |
+| 错误请求详情 | `ls /data/CLIProxyAPI/logs/error-*` |
+| 健康状态 | `make prod-status` |
 
 
 ## 7. 重要路径速查
