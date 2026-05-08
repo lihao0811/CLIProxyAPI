@@ -22,7 +22,7 @@ services:
       - ${CLI_PROXY_DATA_PATH:-./data}:/data
       - ${CLI_PROXY_LOGS_PATH:-./logs}:/CLIProxyAPI/logs
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/v1/models -H 'Authorization: Bearer railway-default-key' >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8080/healthz || exit 1"]
       interval: 20s
       timeout: 5s
       retries: 5
