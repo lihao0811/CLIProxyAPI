@@ -189,7 +189,7 @@ func runOnce(ctx context.Context, client *http.Client, cfg config, w *csvWriter)
 }
 
 func fetch(ctx context.Context, client *http.Client, cfg config) ([]json.RawMessage, error) {
-	url := fmt.Sprintf("%s/usage-queue?count=%d", cfg.target, cfg.batch)
+	url := fmt.Sprintf("%s/v0/management/usage-queue?count=%d", cfg.target, cfg.batch)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
