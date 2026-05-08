@@ -298,6 +298,14 @@ make prod-deploy
 make prod-deploy-force
 ```
 
+> ⚠️ 注意：cnb CI 会在**每次 push 到 cnb** 时 build 新镜像（即使只改了 README / CLAUDE.md / Makefile，也会出新 image id）。
+> 所以 push 到 cnb 之后第一次 `make prod-deploy` **必然**触发重启。
+> 如果是纯文档/脚本改动想避免重启：push 时只推 origin/server，**跳过 cnb**：
+> ```sh
+> git push origin main && git push "ssh://root@81.69.15.109:13100/data/CLIProxyAPI" main
+> # 不推 cnb，cnb 不 build，下次 deploy 就 no-op
+> ```
+
 ### 6.2 回滚
 
 ```sh
