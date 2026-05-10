@@ -342,7 +342,7 @@ func TestRedisProtocol_IPBan_MirrorsManagementPolicy(t *testing.T) {
 	reader := bufio.NewReader(clientConn)
 	_ = clientConn.SetDeadline(time.Now().Add(5 * time.Second))
 
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 50; i++ {
 		if errWrite := writeTestRESPCommand(clientConn, "LPOP", "queue"); errWrite != nil {
 			t.Fatalf("failed to write LPOP command: %v", errWrite)
 		}
@@ -392,7 +392,7 @@ func TestRedisProtocol_AUTH_IPBan_BlocksCorrectPasswordDuringBan(t *testing.T) {
 	reader := bufio.NewReader(clientConn)
 	_ = clientConn.SetDeadline(time.Now().Add(5 * time.Second))
 
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 50; i++ {
 		if errWrite := writeTestRESPCommand(clientConn, "AUTH", "wrong-password"); errWrite != nil {
 			t.Fatalf("failed to write AUTH command: %v", errWrite)
 		}
@@ -412,7 +412,7 @@ func TestRedisProtocol_AUTH_IPBan_BlocksCorrectPasswordDuringBan(t *testing.T) {
 			t.Fatalf("failed to read AUTH banned error: %v", err)
 		}
 		if !strings.HasPrefix(msg, "ERR IP banned due to too many failed attempts. Try again in") {
-			t.Fatalf("unexpected AUTH banned error at attempt %d: %q", i+6, msg)
+			t.Fatalf("unexpected AUTH banned error at attempt %d: %q", i+51, msg)
 		}
 	}
 
@@ -452,7 +452,7 @@ func TestRedisProtocol_LOCALHOST_AUTH_IPBan_BlocksCorrectPasswordDuringBan(t *te
 	reader := bufio.NewReader(conn)
 	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 50; i++ {
 		if errWrite := writeTestRESPCommand(conn, "AUTH", "wrong-password"); errWrite != nil {
 			t.Fatalf("failed to write AUTH command: %v", errWrite)
 		}
