@@ -21,10 +21,24 @@ services:
     volumes:
       - ${CLI_PROXY_DATA_PATH:-./data}:/data
       - ${CLI_PROXY_LOGS_PATH:-./logs}:/CLIProxyAPI/logs
+    labels:
+      - autoheal=true
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8080/healthz || exit 1"]
+      test: ["CMD-SHELL", "wget -q --spider -T 4 http://127.0.0.1:8080/healthz || exit 1"]
       interval: 20s
       timeout: 5s
       retries: 5
       start_period: 30s
     restart: unless-stopped
+
+  autoheal:
+    image: willfarrell/autoheal:1.2.0
+    container_name: cli-proxy-api-autoheal
+    restart: unless-stopped
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: autoheal
+      AUTOHEAL_INTERVAL: 30
+      AUTOHEAL_START_PERIOD: 90
+      AUTOHEAL_DEFAULT_STOP_TIMEOUT: 10
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
