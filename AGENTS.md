@@ -8,13 +8,16 @@ Go 1.26+ proxy server providing OpenAI/Gemini/Claude/Codex compatible APIs with 
 ## Private Deployment Notes
 - Detailed fork/deployment runbook lives in `CLAUDE.md`; check it before production operations.
 - CNB image: `docker.cnb.cool/jung.ren/cliproxyapi:latest`; pushing `main` to `cnb` triggers image build.
-- Shanghai ingress/jump host: `81.69.15.109`. Treat it as a forwarding entrypoint, not the app data host.
-- Production/credential host: `118.89.239.190`.
-- CLIProxyAPI backend entrypoint: `114.111.176.35`; operations SSH uses `ssh -p 13100 root@81.69.15.109`, forwarded to `114.111.176.35:13100`.
-- Backend project path: `/data/CLIProxyAPI`; production container: `cli-proxy-api`.
+- New API host: `118.89.239.190`; it also stores the cnb registry credential at `/root/.docker/config.json`.
+- Shanghai ingress/jump host: `81.69.15.109`. Treat it as the only public CPA entrypoint, not the app data host.
+- CPA Plus backend: `114.111.176.35:13100`; operations SSH uses `ssh -p 13100 root@81.69.15.109`.
+- CPA Free backend: `114.111.176.35:5300`; operations SSH uses `ssh -p 5300 root@81.69.15.109`.
+- Backend project path on each CPA: `/data/CLIProxyAPI`; production container: `cli-proxy-api`.
 - Production compose includes `cli-proxy-api-autoheal`; keep the `autoheal=true` label and the `wget -T 4` healthcheck when editing compose.
-- Ingress port forwards: `81.69.15.109:8317 -> 114.111.176.35:13117`, `81.69.15.109:8080 -> 114.111.176.35:13117`, `81.69.15.109:8085 -> 114.111.176.35:13185`, `81.69.15.109:1455 -> 114.111.176.35:13145`, `81.69.15.109:54545 -> 114.111.176.35:13154`, `81.69.15.109:51121 -> 114.111.176.35:13121`, `81.69.15.109:11451 -> 114.111.176.35:13151`.
-- Production deploy entrypoints on the backend: `make prod-deploy`, `make prod-deploy-force`, `make prod-rollback`.
+- Usage collector is required; each CPA writes CSV files under `/data/CLIProxyAPI/data/usage/`.
+- CPA Plus ingress forwards: `81.69.15.109:8317 -> 114.111.176.35:13117`, `81.69.15.109:8080 -> 114.111.176.35:13117`, `81.69.15.109:8085 -> 114.111.176.35:13185`, `81.69.15.109:1455 -> 114.111.176.35:13145`, `81.69.15.109:54545 -> 114.111.176.35:13154`, `81.69.15.109:51121 -> 114.111.176.35:13121`, `81.69.15.109:11451 -> 114.111.176.35:13151`.
+- CPA Free ingress forwards: `81.69.15.109:5317 -> 114.111.176.35:5317`, `81.69.15.109:5385 -> 114.111.176.35:5385`, `81.69.15.109:5345 -> 114.111.176.35:5345`, `81.69.15.109:5354 -> 114.111.176.35:5354`, `81.69.15.109:5321 -> 114.111.176.35:5321`, `81.69.15.109:5351 -> 114.111.176.35:5351`; `5355` is intentionally avoided.
+- Production deploy entrypoints on each CPA backend: `make prod-deploy`, `make prod-deploy-force`, `make prod-rollback`.
 
 ## Commands
 ```bash

@@ -24,24 +24,35 @@
 ### Docker 镜像
 - Registry：`docker.cnb.cool/jung.ren/cliproxyapi:latest`
 - 由 cnb 自动构建（见 `.cnb.yml`），每次 push main 触发
-- 服务器只 `docker pull`，**不在生产服务器上 build**
-- 服务器 docker login 凭据：从 `118.89.239.190:~/.docker/config.json` 复制（cnb personal access token）
+- CPA 服务器只 `docker pull`，**不在 CPA 服务器上 build**
+- CPA 服务器 docker login 凭据：从 New API 主服务器 `118.89.239.190:~/.docker/config.json` 复制（cnb personal access token）
 
 ### 生产访问拓扑
-- 上海入口 / 跳板机：`81.69.15.109`
-- 真实生产服务器 / 凭据机：`118.89.239.190`
-- CLIProxyAPI 后端入口：`114.111.176.35`（由上海入口转发）
-- 运维 SSH：`ssh -p 13100 root@81.69.15.109`，该端口会转发到 `114.111.176.35:13100`
-- 项目目录：`/data/CLIProxyAPI/`（在后端 CLIProxyAPI 机器上，不在上海跳板机本体）
+
+| 角色 | 地址 | 说明 |
+|---|---|---|
+| New API 主服务器 | `118.89.239.190` | 主服务和 cnb registry 凭据来源 |
+| 上海入口 / 跳板机 | `81.69.15.109` | 唯一公网入口，负责把客户端端口和 SSH 转发到 CPA |
+| CPA Plus | `114.111.176.35:13100` | 上海内网 CPA Plus 后端，互联网不能直连，需经 `81.69.15.109` |
+| CPA Free | `114.111.176.35:5300` | 上海内网 CPA Free 后端，互联网不能直连，需经 `81.69.15.109` |
+
+CPA 运维入口：
+- CPA Plus：`ssh -p 13100 root@81.69.15.109`（转发到 `114.111.176.35:13100`）
+- CPA Free：`ssh -p 5300 root@81.69.15.109`（转发到 `114.111.176.35:5300`）
+- 等价显式跳板写法：`ssh -J root@81.69.15.109 -p <CPA_SSH_PORT> root@114.111.176.35`
+
+CPA 共同约定：
+- 项目目录：`/data/CLIProxyAPI/`
 - 容器名：`cli-proxy-api`
+- 监控容器：`cli-proxy-api-autoheal`
 - Volume 挂载（**全部持久化到 host**）：
   - `./data` ↔ 容器 `/data`（auth 文件 + collector CSV 输出）
   - `./logs` ↔ 容器 `/CLIProxyAPI/logs`（应用日志，`logging-to-file: true` 必须）
-- 主后端端口：`13117`（OpenAI 兼容 / management / 伪 Redis 协议）
+- usage 导出：每台 CPA 独立写到本机 `/data/CLIProxyAPI/data/usage/`
 
-### 上海入口端口转发
+### CPA Plus 端口转发
 
-所有客户端入口先到 `81.69.15.109`，再转发到 CLIProxyAPI 后端 `114.111.176.35`。
+所有客户端入口先到 `81.69.15.109`，再转发到 CPA Plus 后端 `114.111.176.35` 的 13xxx 端口。
 
 | 入口地址 | 后端地址 | 用途 |
 |---|---|---|
@@ -53,6 +64,20 @@
 | `81.69.15.109:51121` | `114.111.176.35:13121` | 备用端口 |
 | `81.69.15.109:11451` | `114.111.176.35:13151` | 备用端口 |
 | `81.69.15.109:13100` | `114.111.176.35:13100` | SSH 运维入口 |
+
+### CPA Free 端口转发
+
+CPA Free 只使用 `5300-5399` 端口段。注意 `5355` 被系统 mDNS/LLMNR 占用，应用端口使用 `5354`。
+
+| 入口地址 | 后端地址 | 容器端口 | 用途 |
+|---|---|---|---|
+| `81.69.15.109:5317` | `114.111.176.35:5317` | 8080 | OpenAI 兼容 / management / 伪 Redis（主端口） |
+| `81.69.15.109:5385` | `114.111.176.35:5385` | 8085 | 备用端口 |
+| `81.69.15.109:5345` | `114.111.176.35:5345` | 1455 | gemini-cli 协议 |
+| `81.69.15.109:5354` | `114.111.176.35:5354` | 54545 | 备用端口 |
+| `81.69.15.109:5321` | `114.111.176.35:5321` | 51121 | 备用端口 |
+| `81.69.15.109:5351` | `114.111.176.35:5351` | 11451 | 备用端口 |
+| `81.69.15.109:5300` | `114.111.176.35:5300` | SSH | SSH 运维入口 |
 
 
 ## 3. 本地相对 upstream 的改动清单（合并时检查）
@@ -242,7 +267,8 @@ ssh -p 13100 root@81.69.15.109 'cd /data/CLIProxyAPI && \
 ```sh
 git push origin main          # GitHub 主仓
 git push cnb main             # 触发 cnb CI build 新镜像
-git push "ssh://root@81.69.15.109:13100/data/CLIProxyAPI" main   # 服务器同步代码
+git push "ssh://root@81.69.15.109:13100/data/CLIProxyAPI" main   # 同步 CPA Plus
+git push "ssh://root@81.69.15.109:5300/data/CLIProxyAPI" main    # 同步 CPA Free（需要更新 free 时）
 ```
 
 合并流程到此结束。后续在 UAT 验证通过后，通过 `sh scripts/deploy.sh`（§6.1）切生产。
@@ -261,18 +287,22 @@ git push "ssh://root@81.69.15.109:13100/data/CLIProxyAPI" main   # 服务器同�
 # 1. 本地改代码、跑编译
 go build ./...
 
-# 2. commit + 三推送
+# 2. commit + 推送
 git add <files>
 git commit -m "<msg>"
 git push origin main && git push cnb main && \
   git push "ssh://root@81.69.15.109:13100/data/CLIProxyAPI" main
+# 如需同步 CPA Free，再执行：
+git push "ssh://root@81.69.15.109:5300/data/CLIProxyAPI" main
 
 # 3. 等 cnb 自动 build 镜像（约 1-3 分钟）
 #    可选：观察镜像 digest 变化
 ssh -p 13100 root@81.69.15.109 'docker pull docker.cnb.cool/jung.ren/cliproxyapi:latest'
+ssh -p 5300 root@81.69.15.109 'docker pull docker.cnb.cool/jung.ren/cliproxyapi:latest'
 
 # 4. 服务器执行部署（自动 backup + pull + recreate + healthcheck）
 ssh -p 13100 root@81.69.15.109 'cd /data/CLIProxyAPI && sh scripts/deploy.sh'
+ssh -p 5300 root@81.69.15.109 'cd /data/CLIProxyAPI && sh scripts/deploy.sh'
 ```
 
 ### 5.2 仅改 docker-compose.yml / Makefile / scripts（不重 build 镜像）
@@ -281,6 +311,7 @@ ssh -p 13100 root@81.69.15.109 'cd /data/CLIProxyAPI && sh scripts/deploy.sh'
 ```sh
 # push 后直接部署
 ssh -p 13100 root@81.69.15.109 'cd /data/CLIProxyAPI && sh scripts/deploy.sh'
+ssh -p 5300 root@81.69.15.109 'cd /data/CLIProxyAPI && sh scripts/deploy.sh'
 ```
 
 ### 5.3 三个远端的角色总结
@@ -289,9 +320,9 @@ ssh -p 13100 root@81.69.15.109 'cd /data/CLIProxyAPI && sh scripts/deploy.sh'
 |---|---|---|
 | `origin` | 代码备份 | 是 |
 | `cnb` | 触发 docker 镜像 CI build | 是（涉及代码改动时） |
-| 服务器（裸仓库 push） | 同步代码到 `/data/CLIProxyAPI` 工作区 | 是 |
+| CPA 服务器（裸仓库 push） | 同步代码到对应 CPA 的 `/data/CLIProxyAPI` 工作区 | 是 |
 
-服务器上配置了 `git config receive.denyCurrentBranch updateInstead`，可直接 push 到工作区。
+每台 CPA 服务器上都应配置 `git config receive.denyCurrentBranch updateInstead`，可直接 push 到工作区。
 
 
 ## 6. 部署操作手册
@@ -366,17 +397,18 @@ make uat-rm            # 删除容器
 
 ## 7. 重要路径速查
 
-### 服务器侧（经 `81.69.15.109:13100` 转发）
+### 服务器侧
 
 | 路径 | 说明 |
 |---|---|
+| `118.89.239.190` | New API 主服务器，保存 cnb registry 登录凭据 |
 | `81.69.15.109` | 上海入口 / 跳板机，只作为客户端端口和 SSH 转发入口，不要当成应用数据所在机器 |
-| `118.89.239.190` | 真实生产服务器 / 凭据相关机器，保存 cnb registry 登录凭据 |
-| `114.111.176.35` | CLIProxyAPI 后端入口；`81.69.15.109:13100` 会转发到这里的 SSH |
-| `/data/CLIProxyAPI/` | CLIProxyAPI 后端项目目录，等同于 git 仓库根 |
+| `114.111.176.35:13100` | CPA Plus；通过 `ssh -p 13100 root@81.69.15.109` 运维 |
+| `114.111.176.35:5300` | CPA Free；通过 `ssh -p 5300 root@81.69.15.109` 运维 |
+| `/data/CLIProxyAPI/` | 每台 CPA 的项目目录，等同于 git 仓库根 |
 | `/data/CLIProxyAPI/.env` | 端口映射 + `COLLECTOR_SECRET=railway-default-password`（**不进仓库**） |
 | `/data/CLIProxyAPI/data/auth/` | OAuth 认证文件（**不进仓库，敏感**） |
-| `/data/CLIProxyAPI/data/usage/` | collector CSV 输出，按账号 email 分文件 |
+| `/data/CLIProxyAPI/data/usage/` | usage collector CSV 输出，每台 CPA 独立保存，按账号 email 分文件 |
 | `/data/CLIProxyAPI/logs/main.log` | 应用主日志（500MB 自动清理） |
 | `/data/CLIProxyAPI/logs/error-*.log` | 错误请求详情（最多 50 个） |
 | `/data/CLIProxyAPI/.backup/<ts>/` | 部署前快照 + RESTORE.sh |
@@ -397,7 +429,7 @@ make uat-rm            # 删除容器
 | `logs-max-total-size-mb` | `500` | 日志总量上限 |
 | `error-logs-max-files` | `50` | 错误日志保留个数 |
 
-### 后端容器端口映射（`.env` 控制）
+### CPA Plus 后端容器端口映射（`.env` 控制）
 
 | 容器端口 | 宿主机端口 | 用途 |
 |---|---|---|
@@ -408,7 +440,18 @@ make uat-rm            # 删除容器
 | 51121 | 13121 | （备用） |
 | 54545 | 13154 | （备用） |
 
-### 上海入口转发映射
+### CPA Free 后端容器端口映射（`.env` 控制）
+
+| 容器端口 | 宿主机端口 | 用途 |
+|---|---|---|
+| 8080 | 5317 | OpenAI 兼容 / management / 伪 Redis（**主端口**） |
+| 1455 | 5345 | gemini-cli 协议 |
+| 8085 | 5385 | （备用） |
+| 11451 | 5351 | （备用） |
+| 51121 | 5321 | （备用） |
+| 54545 | 5354 | （备用；避开系统占用的 5355） |
+
+### 上海入口转发映射：CPA Plus
 
 | 旧入口 / 客户端访问 | 实际后端端口 | 用途 |
 |---|---|---|
@@ -420,6 +463,18 @@ make uat-rm            # 删除容器
 | `81.69.15.109:51121` | `114.111.176.35:13121` | 备用端口 |
 | `81.69.15.109:11451` | `114.111.176.35:13151` | 备用端口 |
 | `81.69.15.109:13100` | `114.111.176.35:13100` | SSH 运维入口 |
+
+### 上海入口转发映射：CPA Free
+
+| 入口 / 客户端访问 | 实际后端端口 | 用途 |
+|---|---|---|
+| `81.69.15.109:5317` | `114.111.176.35:5317` | OpenAI 兼容 / management / 伪 Redis（**主端口**） |
+| `81.69.15.109:5385` | `114.111.176.35:5385` | 备用端口 |
+| `81.69.15.109:5345` | `114.111.176.35:5345` | gemini-cli 协议 |
+| `81.69.15.109:5354` | `114.111.176.35:5354` | 备用端口 |
+| `81.69.15.109:5321` | `114.111.176.35:5321` | 备用端口 |
+| `81.69.15.109:5351` | `114.111.176.35:5351` | 备用端口 |
+| `81.69.15.109:5300` | `114.111.176.35:5300` | SSH 运维入口 |
 
 
 ## 8. 新开发机首次设置
