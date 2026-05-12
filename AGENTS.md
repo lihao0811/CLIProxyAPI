@@ -5,6 +5,17 @@ Go 1.26+ proxy server providing OpenAI/Gemini/Claude/Codex compatible APIs with 
 ## Repository
 - GitHub: https://github.com/router-for-me/CLIProxyAPI
 
+## Private Deployment Notes
+- Detailed fork/deployment runbook lives in `CLAUDE.md`; check it before production operations.
+- CNB image: `docker.cnb.cool/jung.ren/cliproxyapi:latest`; pushing `main` to `cnb` triggers image build.
+- Shanghai ingress/jump host: `81.69.15.109`. Treat it as a forwarding entrypoint, not the app data host.
+- Production/credential host: `118.89.239.190`.
+- CLIProxyAPI backend entrypoint: `114.111.176.35`; operations SSH uses `ssh -p 13100 root@81.69.15.109`, forwarded to `114.111.176.35:13100`.
+- Backend project path: `/data/CLIProxyAPI`; production container: `cli-proxy-api`.
+- Production compose includes `cli-proxy-api-autoheal`; keep the `autoheal=true` label and the `wget -T 4` healthcheck when editing compose.
+- Ingress port forwards: `81.69.15.109:8317 -> 114.111.176.35:13117`, `81.69.15.109:8080 -> 114.111.176.35:13117`, `81.69.15.109:8085 -> 114.111.176.35:13185`, `81.69.15.109:1455 -> 114.111.176.35:13145`, `81.69.15.109:54545 -> 114.111.176.35:13154`, `81.69.15.109:51121 -> 114.111.176.35:13121`, `81.69.15.109:11451 -> 114.111.176.35:13151`.
+- Production deploy entrypoints on the backend: `make prod-deploy`, `make prod-deploy-force`, `make prod-rollback`.
+
 ## Commands
 ```bash
 gofmt -w . # Format (required after Go changes)
