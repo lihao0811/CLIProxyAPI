@@ -25,18 +25,18 @@ import (
 )
 
 type record struct {
-	Timestamp       string `json:"timestamp"`
-	LatencyMs       int64  `json:"latency_ms"`
-	Source          string `json:"source"`
-	AuthIndex       string `json:"auth_index"`
-	Failed          bool   `json:"failed"`
-	Provider        string `json:"provider"`
-	Model           string `json:"model"`
-	Alias           string `json:"alias"`
-	Endpoint        string `json:"endpoint"`
-	AuthType        string `json:"auth_type"`
-	RequestID       string `json:"request_id"`
-	Tokens          tokens `json:"tokens"`
+	Timestamp string `json:"timestamp"`
+	LatencyMs int64  `json:"latency_ms"`
+	Source    string `json:"source"`
+	AuthIndex string `json:"auth_index"`
+	Failed    bool   `json:"failed"`
+	Provider  string `json:"provider"`
+	Model     string `json:"model"`
+	Alias     string `json:"alias"`
+	Endpoint  string `json:"endpoint"`
+	AuthType  string `json:"auth_type"`
+	RequestID string `json:"request_id"`
+	Tokens    tokens `json:"tokens"`
 }
 
 type tokens struct {

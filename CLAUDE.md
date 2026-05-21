@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+@AGENTS.md
+
 > 给 Claude Code / 其他 AI 助手看的本地 fork 项目说明。
 > 注意：仓库根的 `AGENTS.md` 是 codex 默认读取的简版规则；详细本地 fork 运维信息以本文为准。
 > 本地 fork 的所有改动、部署流程、运维信息**只在本文件**。如果用 codex 让它干活，请手动让它额外读这个文件。
