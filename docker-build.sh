@@ -23,6 +23,7 @@ read -r -p "Enter choice [1-2]: " choice
 case "$choice" in
   1)
     echo "--- Running with Pre-built Image ---"
+    export CLI_PROXY_IMAGE="eceasy/cli-proxy-api:latest"
     docker compose up -d --remove-orphans --no-build
     echo "Services are starting from remote image."
     echo "Run 'docker compose logs -f' to see the logs."
@@ -42,7 +43,7 @@ case "$choice" in
     echo "----------------------------------------"
 
     # Build and start the services with a local-only image tag
-    export CLI_PROXY_IMAGE="cli-proxy-api:local"
+    export CLI_PROXY_IMAGE="cliproxyapi-local:latest"
 
     echo "Building the Docker image..."
     docker compose build \

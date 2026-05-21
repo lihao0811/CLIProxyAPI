@@ -1,0 +1,18 @@
+services:
+  cli-proxy-api-uat:
+    image: ${APP_IMAGE:-docker.cnb.cool/jung.ren/cliproxyapi:latest}
+    container_name: cli-proxy-api-uat
+    restart: unless-stopped
+    environment:
+      DEPLOY: cloud
+      COLLECTOR_SECRET: ${UAT_MGMT_SECRET:-railway-default-password}
+      COLLECTOR_TARGET: http://127.0.0.1:8080
+      COLLECTOR_OUTPUT_DIR: /data/usage
+      COLLECTOR_INTERVAL: ${COLLECTOR_INTERVAL:-10s}
+      COLLECTOR_BOOT_DELAY: ${COLLECTOR_BOOT_DELAY:-8s}
+    ports:
+      - "${UAT_HOST:-127.0.0.1}:${UAT_PORT:-13127}:8080"
+    volumes:
+      - ${UAT_DATA_PATH:-./data-uat}:/data
+    mem_limit: 256m
+    cpus: 1.0

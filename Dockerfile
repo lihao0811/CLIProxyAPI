@@ -14,6 +14,8 @@ ARG BUILD_DATE=unknown
 
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X 'main.Version=${VERSION}' -X 'main.Commit=${COMMIT}' -X 'main.BuildDate=${BUILD_DATE}'" -o ./CLIProxyAPI ./cmd/server/
 
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o ./cpa-usage-collector ./cmd/usage-collector/
+
 FROM alpine:3.23
 
 RUN apk add --no-cache tzdata
@@ -21,15 +23,21 @@ RUN apk add --no-cache tzdata
 RUN mkdir /CLIProxyAPI
 
 COPY --from=builder ./app/CLIProxyAPI /CLIProxyAPI/CLIProxyAPI
+COPY --from=builder ./app/cpa-usage-collector /CLIProxyAPI/cpa-usage-collector
 
 COPY config.example.yaml /CLIProxyAPI/config.example.yaml
+COPY railway.yaml /CLIProxyAPI/railway.yaml
+COPY start.sh /CLIProxyAPI/start.sh
 
 WORKDIR /CLIProxyAPI
+
+RUN chmod +x start.sh
 
 EXPOSE 8317
 
 ENV TZ=Asia/Shanghai
+ENV DEPLOY=cloud
 
 RUN cp /usr/share/zoneinfo/${TZ} /etc/localtime && echo "${TZ}" > /etc/timezone
 
-CMD ["./CLIProxyAPI"]
+CMD ["./start.sh"]
